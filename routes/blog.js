@@ -5,9 +5,8 @@ const Comment = require("../models/comment");
 const router = Router();
 
 const multer = require("multer");
-const uploadFileToS3 = require("../utils/s3Upload");
-
-const upload = multer({ storage: multer.memoryStorage() });
+const { storage } = require("../utils/cloudinary");
+const upload = multer({ storage: storage });
 
 
 router.get("/add-new", (req, res) => {
@@ -17,7 +16,12 @@ router.get("/add-new", (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const blog = await Blog.findById(req.params.id).populate("createdBy");
+  const blog = await Blog.findByIdAndUpdate(
+    req.params.id,
+    { $inc: { views: 1 } },
+    { new: true }
+  ).populate("createdBy");
+
   const comments = await Comment.find({ blogId: req.params.id }).populate(
     "createdBy"
   );
@@ -26,6 +30,7 @@ router.get("/:id", async (req, res) => {
     user: req.user,
     blog,
     comments,
+    currentUrl: req.protocol + '://' + req.get('host') + req.originalUrl,
   });
 });
 
@@ -36,6 +41,21 @@ router.post("/comment/:blogId", async (req, res) => {
     createdBy: req.user._id,
   });
   return res.redirect(`/blog/${req.params.blogId}`);
+});
+
+router.post("/like/:id", async (req, res) => {
+  if (!req.user) return res.status(401).send("Unauthorized");
+  const blog = await Blog.findById(req.params.id);
+  const index = blog.likes.indexOf(req.user._id);
+
+  if (index === -1) {
+    blog.likes.push(req.user._id);
+  } else {
+    blog.likes.splice(index, 1);
+  }
+
+  await blog.save();
+  return res.redirect(`/blog/${req.params.id}`);
 });
 
 // edit 
@@ -69,9 +89,13 @@ router.post('/edit/:id', upload.single('coverImage'), async (req, res) => {
 
   blog.title = req.body.title;
   blog.body = req.body.body;
+  
+  if (req.body.tags) {
+    blog.tags = req.body.tags.split(",").map(tag => tag.trim());
+  }
 
   if (req.file) {
-    blog.coverImageURL = req.file.location;
+    blog.coverImageURL = req.file.path;
   }
 
   await blog.save();
@@ -99,10 +123,10 @@ router.post('/delete/:id', async (req, res) => {
 });
 
 router.post("/", upload.single("coverImage"), async (req, res) => {
-  const { title, body } = req.body;
+  const { title, body, tags } = req.body;
   let imageUrl = "";
   if (req.file) {
-    imageUrl = await uploadFileToS3(req.file); // upload to S3 and get URL
+    imageUrl = req.file.path;
   }
 
   const blog = await Blog.create({
@@ -110,6 +134,7 @@ router.post("/", upload.single("coverImage"), async (req, res) => {
     body,
     createdBy: req.user._id,
     coverImageURL: imageUrl,
+    tags: tags ? tags.split(",").map(tag => tag.trim()) : [],
   });
 
   return res.redirect(`/blog/${blog._id}`);

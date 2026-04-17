@@ -18,7 +18,7 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 mongoose
-  .connect(process.env.MONGO_URL)
+  .connect(process.env.MONGO_URI)
   .then((e) => console.log("MongoDB Connected"));
 
 app.set("view engine", "ejs");
@@ -30,10 +30,21 @@ app.use(checkForAuthenticationCookie("token"));
 app.use(express.static(path.resolve("./public")));
 
 app.get("/", async (req, res) => {
-  const allBlogs = await Blog.find({});
+  const searchQuery = req.query.search;
+  let query = {};
+  if (searchQuery) {
+    query = { title: { $regex: searchQuery, $options: "i" } };
+  }
+  const allBlogs = await Blog.find(query);
+  
+  // Extract unique tags
+  const trendingTags = [...new Set(allBlogs.flatMap(blog => blog.tags || []))].slice(0, 10);
+
   res.render("home", {
     user: req.user,
     blogs: allBlogs,
+    searchQuery: searchQuery || "",
+    trendingTags,
   });
 });
 
